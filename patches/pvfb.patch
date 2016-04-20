@@ -1,0 +1,1152 @@
+diff --git a/sys/arch/amd64/conf/XEN3_DOMU b/sys/arch/amd64/conf/XEN3_DOMU
+index 9231d0b..3da522f 100644
+--- a/sys/arch/amd64/conf/XEN3_DOMU
++++ b/sys/arch/amd64/conf/XEN3_DOMU
+@@ -157,6 +157,16 @@ options 	NFS_BOOT_DHCP,NFS_BOOT_BOOTPARAM
+ #options 	NFS_BOOTSTATIC_SERVADDR="\"169.254.1.1\""
+ #options 	NFS_BOOTSTATIC_SERVER="\"server:/path/to/root\""
+ 
++
++# wscons options
++options WSEMUL_VT100
++options WSDISPLAY_SCROLLSUPPORT
++options WSDISPLAY_COMPAT_PCVT
++options WSDISPLAY_COMPAT_SYSCONS
++options WSDISPLAY_COMPAT_USL
++options WSDISPLAY_DEFAULTSCREENS=4
++
++
+ config		netbsd	root on ? type ?
+ #config		netbsd	root on wd0a type ffs
+ #config		netbsd	root on xennet0 type nfs
+@@ -171,6 +181,15 @@ xennet* 	at xenbus?		# Xen virtual network interface
+ xbd*		at xenbus?		# Xen virtual block device
+ balloon*	at xenbus?		# Xen balloon device
+ 
++xkbd*       at xenbus?      # Xen virtual keyboard
++genfb*      at xenbus?      # Xen virtual framebuffer
++
++wsdisplay0  at wsemuldisplaydev? console 1
++wsdisplay*  at wsemuldisplaydev? console 0
++
++wskbd*      at wskbddev? console ?
++wsmouse*    at xkbd?
++
+ xencons*	at hypervisor?		# Xen virtual console
+ 
+ # PCI pass-through support:
+diff --git a/sys/arch/xen/conf/files.xen b/sys/arch/xen/conf/files.xen
+index e3646b5..d9cd329 100644
+--- a/sys/arch/xen/conf/files.xen
++++ b/sys/arch/xen/conf/files.xen
+@@ -222,6 +222,16 @@ device	balloon
+ attach	balloon at xenbus
+ file	arch/xen/xen/balloon.c		balloon
+ 
++# Xen Virtual framebuffer frontend for genfb
++attach genfb at xenbus with xfb: fb
++file arch/xen/xen/xfb_xenbus.c xfb
++
++# Xen Virtual kerboard frontend
++device xkbd: wskbddev, wsmousedev
++file arch/xen/xen/xkbd_xenbus.c xkbd
++attach xkbd at xenbus
++
++
+ # Non-Xen specific devices and options
+ 
+ include	"dev/pckbport/files.pckbport"
+diff --git a/sys/arch/xen/include/xkbdvar.h b/sys/arch/xen/include/xkbdvar.h
+new file mode 100644
+index 0000000..759959d
+--- /dev/null
++++ b/sys/arch/xen/include/xkbdvar.h
+@@ -0,0 +1,117 @@
++#ifndef _XKBDVAR_H
++#define _XKBDVAR_H
++
++#include <dev/wscons/wsksymdef.h>
++
++#define KC(n)	KS_KEYCODE(n)
++/*  Xen gives us Linux input layer keycodes.  Whe use that as the input for
++ *  wscons, and configure the table to translate from those to wscons keysyms.
++ *
++*/
++static const keysym_t xenkbd_keydesc_us[] = {
++/*  pos      command		normal		shifted */
++	KC(1), KS_Cmd_Debugger, KS_Escape,
++	KC(2), KS_1, KS_exclam,
++	KC(3), KS_2, KS_at,
++	KC(4), KS_3, KS_numbersign,
++	KC(5), KS_4, KS_dollar,
++	KC(6), KS_5, KS_percent,
++	KC(7), KS_6, KS_asciicircum,
++	KC(8), KS_7, KS_ampersand,
++	KC(9), KS_8, KS_asterisk,
++	KC(10), KS_9, KS_parenleft,
++	KC(11), KS_0, KS_parenright,
++	KC(12), KS_minus, KS_underscore,
++	KC(13), KS_equal, KS_plus,
++	KC(14), KS_Cmd_ResetEmul, KS_BackSpace,
++	KC(15), KS_Tab,
++	KC(16), KS_q,
++	KC(17), KS_w,
++	KC(18), KS_e,
++	KC(19), KS_r,
++	KC(20), KS_t,
++	KC(21), KS_y,
++	KC(22), KS_u,
++	KC(23), KS_i,
++	KC(24), KS_o,
++	KC(25), KS_p,
++	KC(26), KS_bracketleft, KS_braceleft,
++	KC(27), KS_bracketright, KS_braceright,
++	KC(28), KS_Return,
++	KC(29), KS_Cmd1, KS_Control_L,
++	KC(30), KS_a,
++	KC(31), KS_s,
++	KC(32), KS_d,
++	KC(33), KS_f,
++	KC(34), KS_g,
++	KC(35), KS_h,
++	KC(36), KS_j,
++	KC(37), KS_k,
++	KC(38), KS_l,
++	KC(39), KS_semicolon, KS_colon,
++	KC(40), KS_apostrophe, KS_quotedbl,
++	KC(41), KS_grave, KS_asciitilde,
++	KC(42), KS_Shift_L,
++	KC(43), KS_backslash, KS_bar,
++	KC(44), KS_z,
++	KC(45), KS_x,
++	KC(46), KS_c,
++	KC(47), KS_v,
++	KC(48), KS_b,
++	KC(49), KS_n,
++	KC(50), KS_m,
++	KC(51), KS_comma, KS_less,
++	KC(52), KS_period, KS_greater,
++	KC(53), KS_slash, KS_question,
++	KC(54), KS_Shift_R,
++	KC(55), KS_KP_Multiply,
++	KC(56), KS_Cmd2, KS_Alt_L,
++	KC(57), KS_space,
++	KC(58), KS_Caps_Lock,
++	KC(59), KS_Cmd_Screen0, KS_f1,
++	KC(60), KS_Cmd_Screen1, KS_f2,
++	KC(61), KS_Cmd_Screen2, KS_f3,
++	KC(62), KS_Cmd_Screen3, KS_f4,
++	KC(63), KS_Cmd_Screen4, KS_f5,
++	KC(64), KS_Cmd_Screen5, KS_f6,
++	KC(65), KS_Cmd_Screen6, KS_f7,
++	KC(66), KS_Cmd_Screen7, KS_f8,
++	KC(67), KS_Cmd_Screen8, KS_f9,
++	KC(68), KS_Cmd_Screen9, KS_f10,
++	KC(69), KS_Num_Lock,
++	KC(70), KS_Hold_Screen,
++	KC(71), KS_KP_Home, KS_KP_7,
++	KC(72), KS_KP_Up, KS_KP_8,
++	KC(73), KS_Cmd_ScrollFastUp, KS_KP_Prior, KS_KP_9,
++	KC(74), KS_KP_Subtract,
++	KC(75), KS_KP_Left, KS_KP_4,
++	KC(76), KS_KP_Begin, KS_KP_5,
++	KC(77), KS_KP_Right, KS_KP_6,
++	KC(78), KS_KP_Add,
++	KC(79), KS_KP_End, KS_KP_1,
++	KC(80), KS_KP_Down, KS_KP_2,
++	KC(81), KS_Cmd_ScrollFastDown, KS_KP_Next, KS_KP_3,
++	KC(82), KS_KP_Insert, KS_KP_0,
++	KC(83), KS_KP_Delete, KS_KP_Decimal,
++	KC(87), KS_f11,
++	KC(88), KS_f12,
++
++	KC(96), KS_KP_Enter,
++	KC(97), KS_Control_R,
++	KC(98), KS_KP_Divide,
++
++	/* This comes from scancode 184 */
++	KC(100), KS_Alt_R,
++	KC(102), KS_Home,
++	KC(103), KS_Up,
++	KC(104), KS_Cmd_ScrollFastUp, KS_Prior,
++	KC(105), KS_Left,
++	KC(106), KS_Right,
++	KC(107), KS_End,
++	KC(108), KS_Down,
++	KC(109), KS_Cmd_ScrollFastDown, KS_Next,
++	KC(110), KS_Insert,
++	KC(111), KS_Delete,
++};
++#undef KC
++#endif /* _XKBDVAR_H */
+diff --git a/sys/arch/xen/xen/xfb_xenbus.c b/sys/arch/xen/xen/xfb_xenbus.c
+new file mode 100644
+index 0000000..f05f940
+--- /dev/null
++++ b/sys/arch/xen/xen/xfb_xenbus.c
+@@ -0,0 +1,414 @@
++/* 
++ * The Xen virtual framebuffer frontend 
++ *
++ * Configures and attaches a genfb to a memory location that is then shared with xen.
++ * No attempt is done to detect "dirty" regions of the framebuffer and send region
++ * updates to xen, that is, the driver don't support feature-update. 
++ *
++ * Altough supported by XEN, this driver doesn't provide any way to change the
++ * resolution at runtime. Not even at kernel boot time.  Resolution is fixed by the
++ * constants XENFB_WIDTH, XENFB_HEIGHT and XENFB_DEPTH. 
++ *
++ */
++
++#include <sys/cdefs.h>
++
++#include "opt_xen.h"
++
++#include <sys/param.h>
++#include <sys/device.h>
++#include <sys/ioctl.h>
++
++#include <uvm/uvm.h>
++#include <machine/autoconf.h>
++#include <machine/pmap.h>
++#include <dev/wsfb/genfbvar.h>
++
++#include <sys/conf.h>
++#include <sys/fcntl.h>
++#include <sys/kernel.h>
++#include <sys/proc.h>
++#include <sys/systm.h>
++
++#include <sys/kmem.h>
++
++#include <xen/hypervisor.h>
++#include <xen/evtchn.h>
++#include <xen/granttables.h>
++#include <xen/xen-public/io/fbif.h>
++#include <xen/xen-public/io/protocols.h>
++
++#include <xen/xenbus.h>
++#include "locators.h"
++
++
++/* XXX: this shouldn't be here */
++#define XENFB_WIDTH 1280
++#define XENFB_HEIGHT 800
++#define XENFB_DEPTH 16		/* 32 */
++#define XENFB_DEFAULT_FB_LEN (XENFB_WIDTH * XENFB_HEIGHT * XENFB_DEPTH / 8)
++
++#define FB_DISCONNECTED 0
++#define FB_CONNECTED 1
++#define FB_SUSPENDED  2
++#define FB_CLOSED  3
++
++struct xfb_xenbus_softc {
++	struct genfb_softc sc_gen;
++
++	device_t sc_dev;
++	struct sysctllog *sc_log;
++	struct xenbus_device *sc_xbusd;
++	int sc_backend_status;
++
++	kmutex_t dirty_lock;
++
++	unsigned char *fb;
++	int fb_size;
++
++	struct xenfb_page *page;
++	int nr_pages;
++	unsigned long *gfns;
++
++	unsigned int sc_evtchn;
++
++	int update_wanted;
++	int feature_resize;
++};
++
++static int xfb_xenbus_match(device_t, cfdata_t, void *);
++static void xfb_xenbus_attach(device_t, device_t, void *);
++static int xfb_xenbus_detach(device_t, int);
++static bool xfb_xenbus_resume(device_t, const pmf_qual_t *);
++static bool xfb_xenbus_suspend(device_t, const pmf_qual_t *);
++static void xfb_backend_changed(void *, XenbusState);
++
++static int xfb_handler(void *);
++
++
++/* genfb callbacks */
++static int xfb_xenbus_genfb_ioctl(void *, void *, u_long, void *, int, struct lwp *);
++static paddr_t xfb_xenbus_genfb_mmap(void *, void *, off_t, int);
++
++
++CFATTACH_DECL_NEW(xfb, sizeof(struct xfb_xenbus_softc),
++    xfb_xenbus_match, xfb_xenbus_attach, xfb_xenbus_detach, NULL);
++
++
++static int
++xfb_xenbus_match(device_t parent, cfdata_t match, void *aux)
++{
++	struct xenbusdev_attach_args *xa = aux;
++	int matchlvl = 1;
++
++	/* Not sure about this */
++	if (genfb_is_console())
++		matchlvl = 5;
++
++	if (strcmp(xa->xa_type, "vfb") != 0)
++		return 0;
++	if (match->cf_loc[XENBUSCF_ID] != XENBUSCF_ID_DEFAULT &&
++	    match->cf_loc[XENBUSCF_ID] != xa->xa_id)
++		return 0;
++	return matchlvl;
++}
++
++static void
++xfb_xenbus_attach(device_t parent, device_t self, void *aux)
++{
++	struct xfb_xenbus_softc *sc = device_private(self);
++	struct xenbusdev_attach_args *xa = aux;
++	static const struct genfb_ops zero_ops;
++	struct genfb_ops ops = zero_ops;
++	sc->sc_gen.sc_dev = self;
++
++	struct xenfb_page *page;
++	aprint_normal(": xen Virtual Framebuffer driver\n");
++	int fb_size;
++
++	sc->sc_backend_status = FB_DISCONNECTED;
++
++	sc->sc_dev = self;
++	sc->sc_xbusd = xa->xa_xbusd;
++	sc->sc_xbusd->xbusd_otherend_changed = xfb_backend_changed;
++
++
++	fb_size = XENFB_DEFAULT_FB_LEN;
++
++	sc->fb_size = fb_size;
++
++	sc->nr_pages = (fb_size + PAGE_SIZE - 1) >> PAGE_SHIFT;
++	sc->gfns = (void *) uvm_km_alloc(kernel_map, sizeof(unsigned long) * sc->nr_pages, PAGE_SIZE, UVM_KMF_WIRED | UVM_KMF_NOWAIT);
++
++	if (!sc->gfns)
++        panic("%s: Can't allocate space for the framebuffer dir", device_xname(self));
++
++	/* check if this is ok.  What if we want to detect dirty pages to send updates? */
++	sc->fb = kmem_zalloc(fb_size, KM_NOSLEEP);
++	if (!sc->fb)
++        panic("%s: Can't allocate space for the framebuffer dir", device_xname(self));
++
++	page = (void *) uvm_km_alloc(kernel_map, PAGE_SIZE, PAGE_SIZE, UVM_KMF_WIRED | UVM_KMF_ZERO | UVM_KMF_NOWAIT);
++	if (page == NULL) 
++        panic("%s: Can't allocate space for the framebuffer dir", device_xname(self));
++	sc->page = page;
++
++	/* resume shared structures and tell backend that we are ready */
++	if (xfb_xenbus_resume(self, PMF_Q_NONE) == false) {
++		aprint_normal_dev(self, "Error on xfb_xenbus_resume ");
++        uvm_km_free(kernel_map, (vaddr_t)page, PAGE_SIZE, UVM_KMF_WIRED);
++        uvm_km_free(kernel_map, (vaddr_t)sc->gfns, sizeof(unsigned long)* sc->nr_pages , UVM_KMF_WIRED);
++        kmem_free(sc->fb, fb_size);
++		return;
++	}
++	if (!pmf_device_register(self, xfb_xenbus_suspend, xfb_xenbus_resume))
++		aprint_error_dev(self, "couldn't establish power handler\n");
++
++
++	sc->sc_gen.sc_width = XENFB_WIDTH;
++	sc->sc_gen.sc_height = XENFB_HEIGHT;
++	sc->sc_gen.sc_depth = XENFB_DEPTH;
++	sc->sc_gen.sc_stride = XENFB_WIDTH * XENFB_DEPTH / 8;
++	sc->sc_gen.sc_fbsize = XENFB_DEFAULT_FB_LEN;
++
++	sc->sc_gen.sc_fbaddr = sc->fb;
++
++	ops.genfb_ioctl = xfb_xenbus_genfb_ioctl;
++	ops.genfb_mmap = xfb_xenbus_genfb_mmap;
++
++	/* FIXME!! This is preventing some race condition that I couldn't
++	 * spot. Remove this print, and the genfb/display won't be correctly
++	 * attached: genfb0: fbsize: 2621440 nr_pages:640 epd:512 genfb0:
++	 * using event channel 9 wsdisplay at genfb0 not configured
++	 * 
++	 * A correct startup, that needs this print is: genfb0: fbsize ..
++	 * nr_pages:640   epd: 512 genfb using event channel 9 genfb
++	 * framebuffer at 0xffff,  size  , depth,  stride wsdisplay0 at genfb0
++	 * 
++	 * Note:  This can also be made to work if doing a silly for() loop in
++	 * xenfb_init_shared_page to just spin for a little while. Tested with
++	 * 2 vcpu */
++	aprint_normal_dev(self, "\n");
++
++	genfb_attach(&sc->sc_gen, &ops);
++	return;
++}
++
++static int
++xfb_xenbus_genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag, struct lwp * l)
++{
++	switch (cmd) {
++	case WSDISPLAYIO_GTYPE:
++		*(u_int *) data = WSDISPLAY_TYPE_GENFB;
++		return 0;
++	}
++	return EPASSTHROUGH;
++}
++
++static paddr_t
++xfb_xenbus_genfb_mmap(void *v, void *vs, off_t offset, int prot)
++{
++	/* Review this, I'm not sure what I'm doing here with vm */
++	struct xfb_xenbus_softc *sc = v;
++	paddr_t pa;
++	if (offset & PAGE_MASK)
++		panic("xfb_xenbus: offset not page aligned");
++	if ((offset < 0) || (offset > sc->fb_size))
++		return (-1);
++	if (pmap_extract(pmap_kernel(), (vaddr_t) sc->fb + offset, &pa) == FALSE)
++		panic("xfb_xenbus: fb page not mapped");
++	return (atop(pa));
++}
++
++
++static int
++xfb_xenbus_detach(device_t self, int flags)
++{
++	struct xfb_xenbus_softc *sc = device_private(self);
++	aprint_normal_dev(self, "detatch: %d\n", flags);
++	hypervisor_mask_event(sc->sc_evtchn);
++	event_remove_handler(sc->sc_evtchn, &xfb_handler, sc);
++	pmf_device_deregister(self);
++	aprint_normal_dev(self, "detatch complete %d\n", flags);
++	return 0;
++}
++
++static int
++xfb_handler(void *arg)
++{
++    /*
++    * We don't expect anything from the other side.  Anyway for compatibility we should remove
++    * events and just discard them.
++    */
++    return 1;
++}
++
++static void
++xenfb_send_event(struct xfb_xenbus_softc * sc, union xenfb_out_event * event)
++{
++	struct xenfb_page *page = sc->page;
++	uint32_t prod = page->out_prod;
++	xen_mb();
++	XENFB_OUT_RING_REF(page, prod) = *event;
++	xen_wmb();
++	page->out_prod = prod + 1;
++	hypervisor_notify_via_evtchn(sc->sc_evtchn);
++}
++static void
++do_resize(struct xfb_xenbus_softc * sc)
++{
++	union xenfb_out_event event;
++	memset(&event, 0, sizeof(event));
++	event.resize.type = XENFB_TYPE_RESIZE;
++	event.resize.width = XENFB_WIDTH;
++	event.resize.height = XENFB_HEIGHT;
++	event.resize.stride = XENFB_WIDTH * XENFB_DEPTH / 8;
++	event.resize.depth = XENFB_DEPTH;
++	event.resize.offset = 0;
++	xenfb_send_event(sc, &event);
++}
++
++static void
++xfb_backend_changed(void *arg, XenbusState new_state)
++{
++	struct xfb_xenbus_softc *sc = device_private((device_t) arg);
++	unsigned long val;
++	switch (new_state) {
++	case XenbusStateUnknown:
++	case XenbusStateReconfiguring:
++	case XenbusStateReconfigured:
++	case XenbusStateInitialising:
++	case XenbusStateInitialised:
++		break;
++	case XenbusStateInitWait:
++		xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateConnected);
++		break;
++	case XenbusStateConnected:
++		xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateConnected);
++		if (xenbus_read_ul(NULL, sc->sc_xbusd->xbusd_otherend, "request-update", &val, 10) < 0)
++			val = 0;
++		sc->update_wanted = val; /* unused for now */
++		if (xenbus_read_ul(NULL, sc->sc_xbusd->xbusd_otherend, "feature-resize", &val, 10) < 0)
++			val = 0;
++		sc->feature_resize = val;
++        if (sc->feature_resize) {
++            do_resize(sc); /* XXX: How to change the X screen resolution from userland? */
++        }
++
++		break;
++
++	case XenbusStateClosing:
++		sc->sc_backend_status = FB_CLOSED;
++		xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateClosed);
++		break;
++	default:
++		panic("bad backend state: %d", new_state);
++	}
++}
++
++static bool
++xfb_xenbus_suspend(device_t dev, const pmf_qual_t * qual)
++{
++	struct xfb_xenbus_softc *sc = device_private(dev);
++	sc->sc_backend_status = FB_SUSPENDED;
++    hypervisor_mask_event(sc->sc_evtchn);
++    event_remove_handler(sc->sc_evtchn, xfb_handler, sc);
++	xenbus_device_suspend(sc->sc_xbusd);
++	aprint_normal_dev(dev, "removed event channel %d\n", sc->sc_evtchn);
++	return true;
++}
++
++
++
++static void
++xenfb_init_shared_page(struct xfb_xenbus_softc * sc)
++{
++	/* Review this, I'm not sure what I'm doing here with vm */
++	int i;
++	int epd = PAGE_SIZE / sizeof(sc->gfns[0]);
++	aprint_normal_dev(sc->sc_dev, "fbsize: %d nr_pages:%d epd:%d\n", sc->fb_size, sc->nr_pages, epd);
++	for (i = 0; i < sc->nr_pages; i++) {
++		sc->gfns[i] = vtomfn((vaddr_t) (sc->fb + i * PAGE_SIZE));
++	}
++	for (i = 0; i * epd < sc->nr_pages; i++) {
++		sc->page->pd[i] = vtomfn((vaddr_t) & sc->gfns[i * epd]);
++	}
++
++	sc->page->width = XENFB_WIDTH;
++	sc->page->height = XENFB_HEIGHT;
++	sc->page->depth = XENFB_DEPTH;
++	sc->page->mem_length = XENFB_DEFAULT_FB_LEN;
++	sc->page->line_length = XENFB_WIDTH * XENFB_DEPTH / 8;
++	sc->page->in_cons = sc->page->in_prod = 0;
++	sc->page->out_cons = sc->page->out_prod = 0;
++}
++
++
++static bool
++xfb_xenbus_resume(device_t dev, const pmf_qual_t * qual)
++{
++	struct xfb_xenbus_softc *sc;
++	struct xenbus_transaction *xbt;
++	int error;
++	const char *errmsg;
++	sc = device_private(dev);
++
++	xenfb_init_shared_page(sc);
++	error = xenbus_alloc_evtchn(sc->sc_xbusd, &sc->sc_evtchn);
++	if (error)
++		goto abort_resume;
++	aprint_normal_dev(dev, "using event channel %d\n", sc->sc_evtchn);
++	event_set_handler(sc->sc_evtchn, &xfb_handler, sc,
++	    IPL_TTY, device_xname(dev));
++again:
++	xbt = xenbus_transaction_start();
++	if (xbt == NULL)
++		return false;
++	error = xenbus_printf(xbt, sc->sc_xbusd->xbusd_path,
++	    "event-channel", "%u", sc->sc_evtchn);
++	if (error) {
++		errmsg = "writing event channel";
++		goto abort_transaction;
++
++	}
++	/* We don't support feature-update error = xenbus_printf(xbt,
++	 * sc->sc_xbusd->xbusd_path, "feature-update", "1"); if (error) {
++	 * errmsg = "writing feature-update"; goto abort_transaction;
++	 * 
++	 * } */
++
++	error = xenbus_printf(xbt, sc->sc_xbusd->xbusd_path,
++	    "protocol", "%s", XEN_IO_PROTO_ABI_NATIVE);
++	if (error) {
++		errmsg = "writing protocol";
++		goto abort_transaction;
++	}
++	error = xenbus_printf(xbt, sc->sc_xbusd->xbusd_path,
++	    "page-ref", "%lu", vtomfn((vaddr_t) sc->page));
++	if (error) {
++		errmsg = "writing protocol";
++		goto abort_transaction;
++	}
++	error = xenbus_transaction_end(xbt, 0);
++	if (error == EAGAIN)
++		goto again;
++	if (error != 0) {
++		xenbus_dev_fatal(sc->sc_xbusd, error,
++		    "completing transaction");
++		return false;
++	}
++    if (sc->sc_backend_status == FB_SUSPENDED) {
++        xenbus_device_resume(sc->sc_xbusd);
++    }
++	xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateInitialised);
++	return true;
++abort_resume:
++	xenbus_dev_fatal(sc->sc_xbusd, error, "resuming device");
++	return false;
++abort_transaction:
++	xenbus_transaction_end(xbt, 1);
++	xenbus_dev_fatal(sc->sc_xbusd, error, "%s", errmsg);
++	return false;
++}
++
++extern struct cfdriver xfb_cd;
+diff --git a/sys/arch/xen/xen/xkbd_xenbus.c b/sys/arch/xen/xen/xkbd_xenbus.c
+new file mode 100644
+index 0000000..ac7379f
+--- /dev/null
++++ b/sys/arch/xen/xen/xkbd_xenbus.c
+@@ -0,0 +1,545 @@
++/* 
++ * The Xen virtual keyboard frontend 
++ *
++ * It translate input events delivered by the xen pvfb driver to wscons ones.
++ *
++ * The xen pvfb *do not* deliver raw scancodes, it gives linux input codes,
++ * that are here translated using a linux-input-code -> wscons keysyms translation table.
++ *
++ * For X,  the wskbd protocol must be used, we don't attempt to provide scancodes. 
++ *
++ */
++#include <sys/cdefs.h>
++#include "opt_xen.h"
++
++#include <sys/param.h>
++#include <sys/device.h>
++#include <sys/condvar.h>
++#include <sys/conf.h>
++#include <sys/fcntl.h>
++#include <sys/kernel.h>
++#include <sys/proc.h>
++#include <sys/systm.h>
++#include <sys/kmem.h>
++
++#include <uvm/uvm.h>
++
++#include <dev/wscons/wsconsio.h>
++#include <dev/wscons/wskbdvar.h>
++#include <dev/wscons/wsmousevar.h>
++
++#include <xen/hypervisor.h>
++#include <xen/evtchn.h>
++#include <xen/granttables.h>
++#include <xen/xen-public/io/fbif.h>
++#include <xen/xen-public/io/kbdif.h>
++#include <xen/xen-public/io/protocols.h>
++
++#include <xen/xenbus.h>
++#include <xen/xkbdvar.h> /* translation table */
++
++#include "locators.h"
++
++
++#define FB_DISCONNECTED 0
++#define FB_CONNECTED 1
++#define FB_SUSPENDED  2
++#define FB_CLOSED  3
++
++/* BORROWED from linux input-event-codes.h  These are mouse clicks as sent by xen */
++#define BTN_LEFT	0x110
++#define BTN_RIGHT	0x111
++#define BTN_MIDDLE      0x112
++
++#define BTN_LEFT_MASK	1
++#define BTN_MIDDLE_MASK	2
++#define BTN_RIGHT_MASK	4
++
++struct xkbd_xenbus_softc {
++	device_t sc_dev;
++	struct sysctllog *sc_log;
++	struct xenbus_device *sc_xbusd;
++	int sc_backend_status;
++
++	struct xenkbd_page *page;
++	grant_ref_t page_gntref;
++	unsigned int sc_evtchn;
++
++
++	int sc_enabled;
++	device_t sc_wskbddev;
++	device_t sc_wsmousedev;
++
++	int sc_mouse_buttons;
++
++	struct xenkbd_key sc_pollbuf[16];
++	int sc_poll;
++	int sc_polled_chars;
++
++	kcondvar_t sc_cond;
++	kmutex_t sc_mutex;
++
++};
++
++static int xkbd_xenbus_match(device_t, cfdata_t, void *);
++static void xkbd_xenbus_attach(device_t, device_t, void *);
++static int xkbd_xenbus_dettach(device_t, int);
++static bool xkbd_xenbus_resume(device_t, const pmf_qual_t *);
++static bool xkbd_xenbus_suspend(device_t, const pmf_qual_t *);
++static void xkbd_backend_changed(void *, XenbusState);
++
++/* convert xenkbd button events to corresponding wsmouse flags */
++int xbtn_to_wsmouse_flag(int);
++static int xkbd_handler(void *);
++
++static void xkbd_cngetc(void *, u_int *, int *);
++static void xkbd_cnpollc(void *, int);
++static int xkbd_key(struct xkbd_xenbus_softc *, int, u_int);
++
++static int xkbd_wsmouse_enable(void *);
++static void xkbd_wsmouse_disable(void *);
++static int xkbd_wsmouse_ioctl(void *v, u_long cmd, void *data, int flag, struct lwp * l);
++
++CFATTACH_DECL_NEW(xkbd, sizeof(struct xkbd_xenbus_softc),
++    xkbd_xenbus_match, xkbd_xenbus_attach, xkbd_xenbus_dettach, NULL);
++
++
++static int
++xkbd_xenbus_match(device_t parent, cfdata_t match, void *aux)
++{
++	struct xenbusdev_attach_args *xa = aux;
++	if (strcmp(xa->xa_type, "vkbd") != 0)
++		return 0;
++	if (match->cf_loc[XENBUSCF_ID] != XENBUSCF_ID_DEFAULT &&
++	    match->cf_loc[XENBUSCF_ID] != xa->xa_id)
++		return 0;
++	return 5;
++}
++
++#define KBD_MAP(name, base, map) \
++			{ name, base, sizeof(map)/sizeof(keysym_t), map }
++const struct wscons_keydesc xkbd_keydesctab[] = {
++	KBD_MAP(KB_US, 0, xenkbd_keydesc_us),
++	{0, 0, 0, 0}
++};
++#undef KBD_MAP
++
++const struct wskbd_mapdata xkbd_keymapdata = {
++	xkbd_keydesctab,
++	KB_US,
++};
++
++
++const struct wskbd_consops xkbd_consops = {
++	.getc = xkbd_cngetc,
++	.pollc = xkbd_cnpollc,
++	.bell = NULL,
++};
++
++
++/* XXX: this is not really tested. */
++static void
++xkbd_cngetc(void *v, u_int * type, int *data)
++{
++	struct xkbd_xenbus_softc *sc = v;
++	KASSERT(sc->sc_poll);
++	mutex_enter(&sc->sc_mutex);
++	while (sc->sc_polled_chars == 0) {	/* loop waiting for data */
++		cv_wait(&sc->sc_cond, &sc->sc_mutex);
++	}
++	*data = (int) sc->sc_pollbuf[0].keycode;
++	*type = sc->sc_pollbuf[0].pressed;
++	sc->sc_polled_chars--;
++	for (int i = sc->sc_polled_chars; i > 0; i--)
++		sc->sc_pollbuf[i - 1] = sc->sc_pollbuf[i];
++	mutex_exit(&sc->sc_mutex);
++
++}
++
++static void
++xkbd_cnpollc(void *v, int on)
++{
++	struct xkbd_xenbus_softc *sc = v;
++	mutex_enter(&sc->sc_mutex);
++	sc->sc_poll = on;
++	if (!on) {
++		int i;
++		for (i = 0; i < sc->sc_polled_chars; i++) {
++			xkbd_key(sc, sc->sc_pollbuf[i].pressed, sc->sc_pollbuf[i].keycode);
++		}
++		sc->sc_polled_chars = 0;
++	}
++	mutex_exit(&sc->sc_mutex);
++}
++
++
++/* 
++ * must be called with the sc_mutex held 
++ */
++static int
++xkbd_key(struct xkbd_xenbus_softc * sc, int type, u_int c)
++{
++	if (sc->sc_poll) {
++		if (sc->sc_polled_chars < 15) {
++			sc->sc_pollbuf[sc->sc_polled_chars].type = type;
++			sc->sc_pollbuf[sc->sc_polled_chars].keycode = c;
++			sc->sc_polled_chars++;
++			if (sc->sc_polled_chars == 1)
++				cv_signal(&sc->sc_cond);
++			return (1);
++		}
++		return (0);	/* Queue is full */
++	} else {
++        if (sc->sc_enabled) 
++            wskbd_input(sc->sc_wskbddev, type, c);
++        return 1;
++	}
++}
++/* wskbd accessopts */
++int xkbd_wskbd_enable(void *, int);
++void xkbd_wskbd_set_leds(void *, int);
++int xkbd_wskbd_ioctl(void *, u_long, void *, int, struct lwp *);
++
++const struct wskbd_accessops xkbd_wskbd_accessops = {
++	xkbd_wskbd_enable,
++	xkbd_wskbd_set_leds,
++	xkbd_wskbd_ioctl,
++};
++
++static const struct wsmouse_accessops xkbd_wsmouse_accessops = {
++	xkbd_wsmouse_enable,
++	xkbd_wsmouse_ioctl,
++	xkbd_wsmouse_disable,
++};
++
++int 
++xkbd_wskbd_enable(void *v, int on)
++{
++	struct xkbd_xenbus_softc *sc = device_private(v);
++	sc->sc_enabled = on;	/* XXX: release blocked lwp on poll? */
++	return 0;
++
++}
++
++void 
++xkbd_wskbd_set_leds(void *v, int leds)
++{
++	/* Nothing to do here */
++
++}
++int 
++xkbd_wskbd_ioctl(void *v, u_long cmd, void *data, int flaf, struct lwp * l)
++{
++	switch (cmd) {
++	case WSKBDIO_GTYPE:
++		*(int *) data = WSKBD_TYPE_PC_AT;
++		return 0;
++	}
++	return EPASSTHROUGH;
++}
++
++static int
++xkbd_wsmouse_enable(void *v)
++{
++	return 0;
++}
++
++static void
++xkbd_wsmouse_disable(void *v)
++{
++	return;
++}
++
++static int
++xkbd_wsmouse_ioctl(void *v, u_long cmd, void *data, int flag, struct lwp * l)
++{
++	switch (cmd) {
++	case WSMOUSEIO_GTYPE:
++		*(u_int *) data = WSMOUSE_TYPE_PS2;
++		break;
++	default:
++		return EPASSTHROUGH;
++	}
++	return 0;
++}
++
++
++static void
++xkbd_xenbus_attach(device_t parent, device_t self, void *aux)
++{
++	struct xkbd_xenbus_softc *sc = device_private(self);
++	struct xenbusdev_attach_args *xa = aux;
++	struct xenkbd_page *page;
++	unsigned long abs;
++	int error;
++	struct wskbddev_attach_args ka_a;
++	struct wsmousedev_attach_args ma_a;
++
++	aprint_normal(": xen Virtual Keyboard driver\n");
++
++	sc->sc_backend_status = FB_DISCONNECTED;
++	sc->sc_enabled = 1;
++	sc->sc_mouse_buttons = 0;
++	sc->sc_dev = self;
++	sc->sc_xbusd = xa->xa_xbusd;
++	sc->sc_xbusd->xbusd_otherend_changed = xkbd_backend_changed;
++
++	mutex_init(&sc->sc_mutex, MUTEX_DEFAULT, IPL_NONE);
++	cv_init(&sc->sc_cond, "xkbdkey");
++
++	page = (void *) uvm_km_alloc(kernel_map, PAGE_SIZE, PAGE_SIZE, UVM_KMF_WIRED | UVM_KMF_ZERO | UVM_KMF_NOWAIT);
++	if (page == NULL)
++        panic("%s: can't alloc page", device_xname(self));
++	sc->page = page;
++
++	if (xenbus_read_ul(NULL, sc->sc_xbusd->xbusd_otherend, "feature-abs-pointer", &abs, 10) < 0)
++		abs = 0;
++	if (abs) {
++		error = xenbus_printf(NULL, sc->sc_xbusd->xbusd_path,
++		    "request-abs-pointer", "1");
++		if (error) {
++			aprint_normal_dev(sc->sc_dev, "can't request abs-pointer");
++			abs = 0;
++		}
++	} else {
++        /*XXX We require abs */
++    }
++	ka_a.console = 1;	/* XXX check this */
++	ka_a.keymap = &xkbd_keymapdata;
++	ka_a.accessops = &xkbd_wskbd_accessops;
++	ka_a.accesscookie = sc;
++
++	wskbd_cnattach(&xkbd_consops, sc, &xkbd_keymapdata);
++	sc->sc_wskbddev = config_found_ia(self, "wskbddev", &ka_a, wskbddevprint);
++
++	ma_a.accessops = &xkbd_wsmouse_accessops;
++	ma_a.accesscookie = sc;
++
++	sc->sc_wsmousedev = config_found_ia(self, "wsmousedev", &ma_a, wsmousedevprint);
++
++
++	/* resume shared structures and tell backend that we are ready */
++	if (xkbd_xenbus_resume(self, PMF_Q_NONE) == false) {
++        uvm_km_free(kernel_map, (vaddr_t)page, PAGE_SIZE, UVM_KMF_WIRED);
++		return;
++	}
++	if (!pmf_device_register(self, xkbd_xenbus_suspend, xkbd_xenbus_resume))
++		aprint_error_dev(self, "couldn't establish power handler\n");
++	return;
++}
++
++static int
++xkbd_xenbus_dettach(device_t self, int flags)
++{
++	struct xkbd_xenbus_softc *sc = device_private(self);
++	aprint_normal_dev(self, "detatch: %d\n", flags);
++	hypervisor_mask_event(sc->sc_evtchn);
++	event_remove_handler(sc->sc_evtchn, &xkbd_handler, sc);
++	pmf_device_deregister(self);
++	return 0;
++}
++
++
++int
++xbtn_to_wsmouse_flag(int btn)
++{
++	switch (btn) {
++	case BTN_LEFT:
++		return BTN_LEFT_MASK;
++	case BTN_MIDDLE:
++		return BTN_MIDDLE_MASK;
++	case BTN_RIGHT:
++		return BTN_RIGHT_MASK;
++	}
++	return 0;
++}
++
++
++static int
++xkbd_handler(void *arg)
++{
++	struct xkbd_xenbus_softc *sc = arg;
++	struct xenkbd_page *page = sc->page;
++	uint32_t cons, prod;
++	u_int evtype;
++	int mouse_btn_flag = 0;
++
++	xen_rmb();
++	prod = page->in_prod;
++	if (prod == page->in_cons)
++		return 1;
++	if (sc->sc_enabled) {
++		for (cons = page->in_cons; cons != prod; cons++) {
++			union xenkbd_in_event *event = &XENKBD_IN_RING_REF(page, cons);
++			switch (event->type) {
++			case XENKBD_TYPE_POS:
++				wsmouse_input(sc->sc_wsmousedev,
++				    sc->sc_mouse_buttons,
++				    event->pos.abs_x,
++				    event->pos.abs_y,
++				    event->pos.rel_z,
++				    0,
++				    WSMOUSE_INPUT_ABSOLUTE_X | WSMOUSE_INPUT_ABSOLUTE_Y);
++				break;
++			case XENKBD_TYPE_MOTION:
++				/* XXX implement relative positioning.
++				 * Altough we do negotiate absolute one. Might
++				 * be needed if some xen host don't support it */
++				break;
++			case XENKBD_TYPE_KEY:
++				switch (event->key.keycode) {
++				case BTN_LEFT:
++				case BTN_MIDDLE:
++				case BTN_RIGHT:
++					mouse_btn_flag = xbtn_to_wsmouse_flag(event->key.keycode);
++					if (event->key.pressed)
++						sc->sc_mouse_buttons |= mouse_btn_flag;
++					else
++						sc->sc_mouse_buttons &= ~mouse_btn_flag;
++					wsmouse_input(sc->sc_wsmousedev,
++					    sc->sc_mouse_buttons, 0, 0, 0, 0,
++					    WSMOUSE_INPUT_DELTA);
++					break;
++				default:
++					/* keyboard */
++					evtype = event->key.pressed ?
++					    WSCONS_EVENT_KEY_DOWN : WSCONS_EVENT_KEY_UP;
++					mutex_enter(&sc->sc_mutex);
++					xkbd_key(sc, evtype, event->key.keycode);
++					mutex_exit(&sc->sc_mutex);
++				}
++				break;
++			}
++		}
++	}
++	page->in_cons = prod;
++	xen_wmb();
++	hypervisor_notify_via_evtchn(sc->sc_evtchn);
++	return 1;
++}
++static void
++xkbd_backend_changed(void *arg, XenbusState new_state)
++{
++	struct xkbd_xenbus_softc *sc = device_private((device_t) arg);
++	switch (new_state) {
++	case XenbusStateReconfiguring:
++	case XenbusStateReconfigured:
++	case XenbusStateInitialising:
++	case XenbusStateInitialised:
++		break;
++	case XenbusStateInitWait:
++		xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateConnected);
++		break;
++	case XenbusStateConnected:
++		xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateConnected);
++		sc->sc_backend_status = FB_CONNECTED;
++		hypervisor_enable_event(sc->sc_evtchn);
++		break;
++
++	case XenbusStateClosing:
++		sc->sc_backend_status = FB_CLOSED;
++		xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateClosed);
++		break;
++	case XenbusStateUnknown:
++		aprint_normal_dev((device_t) arg, "Unknown \n");
++	default:
++		panic("bad backend state: %d", new_state);
++	}
++}
++
++/* XXX: xen  save/restore seems to be broken in general, using this driver or not */
++static bool
++xkbd_xenbus_suspend(device_t dev, const pmf_qual_t * qual)
++{
++	struct xkbd_xenbus_softc *sc = device_private(dev);
++	hypervisor_mask_event(sc->sc_evtchn);
++    event_remove_handler(sc->sc_evtchn, &xkbd_handler, sc);
++	sc->sc_backend_status = FB_SUSPENDED;
++	xenbus_device_suspend(sc->sc_xbusd);
++	aprint_normal_dev(dev, "removed event channel %d\n", sc->sc_evtchn);
++	return true;
++}
++
++
++
++static void
++xenkbd_init_shared_page(struct xkbd_xenbus_softc * sc)
++{
++	sc->page->in_cons = sc->page->in_prod = 0;
++	sc->page->out_cons = sc->page->out_prod = 0;
++}
++
++
++static bool
++xkbd_xenbus_resume(device_t dev, const pmf_qual_t * qual)
++{
++	struct xkbd_xenbus_softc *sc;
++	struct xenbus_transaction *xbt;
++	int error;
++	paddr_t ma;
++	const char *errmsg;
++	sc = device_private(dev);
++    
++    if (sc->sc_backend_status == FB_SUSPENDED) {
++        xengnt_revoke_access(sc->page_gntref);
++    }
++
++	xenkbd_init_shared_page(sc);
++
++	(void) pmap_extract_ma(pmap_kernel(), (vaddr_t) sc->page, &ma);
++	xengnt_grant_access(sc->sc_xbusd->xbusd_otherend_id, ma, 0, &sc->page_gntref);
++
++	error = xenbus_alloc_evtchn(sc->sc_xbusd, &sc->sc_evtchn);
++	if (error) {
++		errmsg = "allocating event channel";
++		goto abort_resume;
++    }
++	aprint_normal_dev(dev, "using event channel %d\n", sc->sc_evtchn);
++	event_set_handler(sc->sc_evtchn, &xkbd_handler, sc,
++	    IPL_TTY, device_xname(dev));
++again:
++	xbt = xenbus_transaction_start();
++	if (xbt == NULL) {
++        errmsg = "starting xenbus stransaction";
++        goto abort_resume;
++    }
++	error = xenbus_printf(xbt, sc->sc_xbusd->xbusd_path,
++	    "event-channel", "%u", sc->sc_evtchn);
++	if (error) {
++		errmsg = "writing event channel";
++		goto abort_transaction;
++	}
++	error = xenbus_printf(xbt, sc->sc_xbusd->xbusd_path,
++	    "page-ref", "%lu", vtomfn((vaddr_t) sc->page));
++	if (error) {
++		errmsg = "writing page-ref";
++		goto abort_transaction;
++	}
++	error = xenbus_printf(xbt, sc->sc_xbusd->xbusd_path,
++	    "page-gref", "%u", sc->page_gntref);
++	if (error) {
++		errmsg = "writing page-gref";
++		goto abort_transaction;
++	}
++	error = xenbus_transaction_end(xbt, 0);
++	if (error == EAGAIN)
++		goto again;
++	if (error != 0) {
++		xenbus_dev_fatal(sc->sc_xbusd, error,
++		    "completing transaction");
++		return false;
++	}
++    if (sc->sc_backend_status == FB_SUSPENDED) {
++        xenbus_device_resume(sc->sc_xbusd);
++    }
++	xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateInitialised);
++	return true;
++
++abort_transaction:
++	xenbus_transaction_end(xbt, 1);
++abort_resume:
++	xenbus_dev_fatal(sc->sc_xbusd, error, "%s", errmsg);
++	return false;
++}
++
++extern struct cfdriver xkbd_cd;
