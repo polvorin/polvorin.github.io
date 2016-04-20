@@ -7,7 +7,7 @@ tags: netbsd xen programming
 Recently installed 7.0 on a xen VM. There is no paravirtual driver video driver for it yet,
 but there is a [project proposal](http://wiki.netbsd.org/projects/project/xen-domu-pvfb/).
 
-After some work (took me considerably more than the estimated 16h, the truth be said)
+After some work (took me considerably more than the estimated 16hs, truth be told)
 got something usable.  The patch is [here]({{site.url}}/patches/pvfb.patch)
 
 To apply the patch, run from the kernel' src dir
